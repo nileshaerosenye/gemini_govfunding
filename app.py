@@ -1,100 +1,155 @@
 import requests
 import yfinance as yf
+import pandas as pd
 from flask import Flask, render_template, request, jsonify
-from datetime import datetime, timedelta
+from datetime import datetime
 
 app = Flask(__name__)
-HEADERS = {'User-Agent': 'MarketCapFix/1.0 (yourname@example.com)'}
+
+HEADERS = {
+    "User-Agent": "EquityIntel/1.0 (contact@example.com)",
+    "Accept-Encoding": "gzip, deflate"
+}
+
+USA_SPENDING_URL = "https://api.usaspending.gov/api/v2/search/spending_by_award/"
 
 
-@app.route('/')
+@app.route("/")
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
 
-@app.route('/search')
+# ---------------- SEARCH (SEC tickers) ----------------
+@app.route("/search")
 def search():
-    query = request.args.get('q', '').upper()
-    url = "https://www.sec.gov/files/company_tickers.json"
+    q = request.args.get("q", "").upper()
     try:
-        data = requests.get(url, headers=HEADERS).json()
-        results = [{"ticker": v['ticker'], "name": v['title'], "cik": v['cik_str']}
-                   for v in data.values() if query in v['ticker'] or query in v['title'].upper()][:8]
+        data = requests.get(
+            "https://www.sec.gov/files/company_tickers.json",
+            headers=HEADERS,
+            timeout=10
+        ).json()
+
+        results = []
+        for v in data.values():
+            if q in v["ticker"] or q in v["title"].upper():
+                results.append({
+                    "ticker": v["ticker"],
+                    "name": v["title"],
+                    "cik": v["cik_str"]
+                })
+            if len(results) >= 8:
+                break
+
         return jsonify(results)
     except:
         return jsonify([])
 
 
-@app.route('/get_financials')
+# ---------------- GOVERNMENT CONTRACTS ----------------
+def get_gov_contracts(company_name, ticker):
+    payload = {
+        "filters": {
+            "recipient_search_text": [company_name],
+            "award_type_codes": ["A", "B", "C", "D"]
+        },
+        "fields": [
+            "Award Amount",
+            "Awarding Agency",
+            "Start Date"
+        ],
+        "limit": 50,
+        "page": 1
+    }
+
+    r = requests.post(
+        USA_SPENDING_URL,
+        headers={**HEADERS, "Content-Type": "application/json"},
+        json=payload,
+        timeout=20
+    )
+
+    if r.status_code != 200:
+        return []
+
+    clean = []
+    for row in r.json().get("results", []):
+        amt = row.get("Award Amount")
+        if amt and amt > 0:
+            clean.append({
+                "ticker": ticker,
+                "agency": row.get("Awarding Agency", "Unknown"),
+                "amount": amt,
+                "date": row.get("Start Date")
+            })
+    return clean
+
+
+# ---------------- FINANCIALS ----------------
+@app.route("/get_financials")
 def get_financials():
-    ticker = request.args.get('ticker')
-    cik = str(request.args.get('cik')).zfill(10)
+    ticker = request.args.get("ticker")
+    cik = str(request.args.get("cik")).zfill(10)
+    company_name = request.args.get("name", "")
 
     try:
-        # 1. Fetch SEC Shares
+        # ---- SEC Shares Outstanding ----
         sec_url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-        res = requests.get(sec_url, headers=HEADERS).json()
-        facts = res.get('facts', {})
+        sec = requests.get(sec_url, headers=HEADERS, timeout=10).json()
 
-        master_shares = {}
-        # Try different taxonomies and tags
-        for tax in ['dei', 'us-gaap']:
-            for tag in ['EntityCommonStockSharesOutstanding', 'CommonStockSharesOutstanding']:
+        facts = sec.get("facts", {})
+        shares_data = {}
+
+        for tax in ["dei", "us-gaap"]:
+            for tag in ["EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"]:
                 if tag in facts.get(tax, {}):
-                    # SEC data can be under 'shares' or 'pure'
-                    units = facts[tax][tag]['units']
-                    unit_key = 'shares' if 'shares' in units else 'pure'
-                    for entry in units.get(unit_key, []):
-                        # Filter for 10-K/Q to avoid noise
-                        if entry.get('form') in ['10-K', '10-Q']:
-                            master_shares[entry['end']] = entry['val']
+                    units = facts[tax][tag]["units"]
+                    key = "shares" if "shares" in units else "pure"
+                    for r in units.get(key, []):
+                        if r.get("form") in ["10-K", "10-Q"]:
+                            shares_data[r["end"]] = r["val"]
 
-        sorted_dates = sorted(master_shares.keys())
-        if not sorted_dates:
-            return jsonify({"error": "No share data found in SEC tags"}), 404
+        if not shares_data:
+            return jsonify({"error": "No SEC share data found"})
 
-        # 2. Fetch Prices with fixed multi-index
-        # We download extra padding to ensure we have prices for all SEC dates
-        stock_data = yf.download(ticker, start=sorted_dates[0], progress=False)
+        dates = sorted(shares_data.keys())
 
-        # FIX: Flatten yfinance multi-index if it exists
-        if isinstance(stock_data.columns, pd.MultiIndex):
-            stock_data.columns = stock_data.columns.get_level_values(0)
+        # ---- Prices ----
+        prices = yf.download(ticker, start=dates[0], progress=False)
+        if isinstance(prices.columns, pd.MultiIndex):
+            prices.columns = prices.columns.get_level_values(0)
 
-        labels, share_counts, market_caps = [], [], []
+        labels, shares, market_caps = [], [], []
 
-        for date_str in sorted_dates:
-            target_dt = datetime.strptime(date_str, '%Y-%m-%d')
-
-            # 3. Fuzzy Search: Find the closest price on or before this date
-            # This handles weekends and holidays
-            try:
-                # Get all dates before or equal to target
-                available_prices = stock_data[stock_data.index <= target_dt]
-                if available_prices.empty: continue
-
-                # Take the most recent price
-                latest_price_row = available_prices.iloc[-1]
-                price = float(latest_price_row['Close'])
-                shares = float(master_shares[date_str])
-
-                labels.append(date_str)
-                share_counts.append(shares)
-                market_caps.append(shares * price)
-            except:
+        for d in dates:
+            dt = datetime.strptime(d, "%Y-%m-%d")
+            valid = prices[prices.index <= dt]
+            if valid.empty:
                 continue
+            price = float(valid.iloc[-1]["Close"])
+            s = float(shares_data[d])
+
+            labels.append(d)
+            shares.append(s)
+            market_caps.append(s * price)
+
+        # ---- Government Contracts (skip ETFs) ----
+        gov_contracts = []
+        if not ticker.endswith(("QQQ", "SPY", "ETF")):
+            gov_contracts = get_gov_contracts(company_name, ticker)
 
         return jsonify({
             "labels": labels,
-            "shares": share_counts,
-            "market_cap": market_caps
+            "shares": shares,
+            "market_cap": market_caps,
+            "gov_contracts": gov_contracts,
+            "ticker": ticker,
+            "company": company_name
         })
+
     except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)})
 
 
-if __name__ == '__main__':
-    import pandas as pd  # Ensure pandas is available for the multi-index fix
-
+if __name__ == "__main__":
     app.run(debug=True)

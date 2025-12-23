@@ -1,120 +1,133 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Equity Intel | Debug Mode</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        :root { --primary: #10b981; --secondary: #3b82f6; --bg: #f8fafc; }
-        body { font-family: 'Inter', sans-serif; background: var(--bg); padding: 40px; }
-        .container { max-width: 1000px; margin: auto; background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
-        input { width: 100%; padding: 15px; border-radius: 10px; border: 1px solid #e2e8f0; font-size: 16px; margin-bottom: 20px; }
-        .results { border: 1px solid #e2e8f0; border-radius: 8px; margin-top: -15px; margin-bottom: 20px; max-height: 200px; overflow-y: auto; display: none; }
-        .item { padding: 12px; cursor: pointer; border-bottom: 1px solid #f1f5f9; }
-        .item:hover { background: #eff6ff; }
-        #log { font-family: monospace; font-size: 12px; background: #1e293b; color: #34d399; padding: 15px; border-radius: 8px; margin-top: 20px; display: none; }
-        .chart-container { height: 450px; margin-top: 20px; }
-    </style>
+<meta charset="UTF-8">
+<title>Equity Intel</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body { font-family: Inter, sans-serif; background:#f8fafc; padding:40px }
+.container { max-width:1000px; margin:auto; background:white; padding:30px; border-radius:14px }
+input { width:100%; padding:14px; font-size:16px }
+.results { border:1px solid #e5e7eb; margin-top:6px; display:none }
+.item { padding:10px; cursor:pointer }
+.item:hover { background:#eef2ff }
+.chart-box { margin-top:30px }
+</style>
 </head>
+
 <body>
-
 <div class="container">
-    <h1>Market Cap <span>Visualizer</span></h1>
-    <input type="text" id="search" placeholder="Search Company..." onkeyup="doSearch()">
-    <div id="results" class="results"></div>
+<h1>Equity Intel</h1>
 
-    <div id="status" style="color: #64748b; margin-bottom: 10px;">Ready</div>
+<input id="search" placeholder="Search company..." onkeyup="doSearch()">
+<div id="results" class="results"></div>
 
-    <div id="chart-card" style="display:none;">
-        <h2 id="title"></h2>
-        <div class="chart-container">
-            <canvas id="chart"></canvas>
-        </div>
-    </div>
+<h3 id="status">Ready</h3>
 
-    <div id="log"></div>
+<div class="chart-box">
+<canvas id="mainChart"></canvas>
+</div>
+
+<div class="chart-box">
+<h2>🏛 Government Contracts</h2>
+<canvas id="govChart"></canvas>
+</div>
 </div>
 
 <script>
-    let myChart = null;
+let mainChart, govChart;
 
-    function addLog(msg) {
-        const log = document.getElementById('log');
-        log.style.display = 'block';
-        log.innerHTML += `> ${msg}<br>`;
-    }
+async function doSearch() {
+    const q = search.value;
+    if (q.length < 2) return results.style.display = "none";
 
-    async function doSearch() {
-        const q = document.getElementById('search').value;
-        const resDiv = document.getElementById('results');
-        if (q.length < 2) { resDiv.style.display = 'none'; return; }
-        const res = await fetch(`/search?q=${q}`);
-        const data = await res.json();
-        resDiv.innerHTML = '';
-        resDiv.style.display = 'block';
-        data.forEach(s => {
-            const d = document.createElement('div');
-            d.className = 'item';
-            d.innerHTML = `<b>${s.ticker}</b> - ${s.name}`;
-            d.onclick = () => load(s);
-            resDiv.appendChild(d);
-        });
-    }
+    const r = await fetch(`/search?q=${q}`);
+    const data = await r.json();
+    results.innerHTML = "";
+    results.style.display = "block";
 
-    async function load(s) {
-        document.getElementById('results').style.display = 'none';
-        document.getElementById('status').innerText = "Processing " + s.ticker + "...";
-        document.getElementById('log').innerHTML = '';
-        addLog(`Fetching SEC CIK ${s.cik} for ${s.ticker}`);
+    data.forEach(s => {
+        const d = document.createElement("div");
+        d.className = "item";
+        d.innerHTML = `<b>${s.ticker}</b> – ${s.name}`;
+        d.onclick = () => load(s);
+        results.appendChild(d);
+    });
+}
 
-        try {
-            const res = await fetch(`/get_financials?ticker=${s.ticker}&cik=${s.cik}`);
-            const data = await res.json();
+async function load(s) {
+    results.style.display = "none";
+    status.innerText = "Loading " + s.ticker;
 
-            if (data.error) throw new Error(data.error);
-            if (data.labels.length === 0) throw new Error("No data matched between SEC and Yahoo Finance");
+    const r = await fetch(`/get_financials?ticker=${s.ticker}&cik=${s.cik}&name=${encodeURIComponent(s.name)}`);
+    const data = await r.json();
+    if (data.error) return status.innerText = data.error;
 
-            addLog(`Success: Found ${data.labels.length} historical data points.`);
-
-            document.getElementById('chart-card').style.display = 'block';
-            document.getElementById('status').innerText = "Displaying " + s.ticker;
-            document.getElementById('title').innerText = s.name;
-
-            const ctx = document.getElementById('chart').getContext('2d');
-            if (myChart) myChart.destroy();
-
-            myChart = new Chart(ctx, {
-                data: {
-                    labels: data.labels,
-                    datasets: [
-                        {
-                            type: 'bar',
-                            label: 'Market Cap (USD)',
-                            data: data.market_cap,
-                            backgroundColor: 'rgba(59, 130, 246, 0.5)',
-                            yAxisID: 'y'
-                        },
-                        {
-                            type: 'line',
-                            label: 'Shares Outstanding',
-                            data: data.shares,
-                            borderColor: '#10b981',
-                            yAxisID: 'y1'
-                        }
-                    ]
+    // ---- Market Cap Chart ----
+    if (mainChart) mainChart.destroy();
+    mainChart = new Chart(mainChartCtx = document.getElementById("mainChart"), {
+        data: {
+            labels: data.labels,
+            datasets: [
+                {
+                    type: "bar",
+                    label: "Market Cap",
+                    data: data.market_cap,
+                    backgroundColor: "rgba(59,130,246,.6)"
                 },
-                options: {
-                    scales: {
-                        y: { position: 'left', ticks: { callback: v => '$' + (v/1e9).toFixed(1) + 'B' } },
-                        y1: { position: 'right', grid: { display: false }, ticks: { callback: v => (v/1e9).toFixed(1) + 'B' } }
-                    }
+                {
+                    type: "line",
+                    label: "Shares Outstanding",
+                    data: data.shares,
+                    borderColor: "#10b981",
+                    yAxisID: "y1"
                 }
-            });
-        } catch (e) {
-            addLog(`ERROR: ${e.message}`);
-            document.getElementById('status').innerText = "Failed to load.";
+            ]
+        },
+        options: {
+            scales: {
+                y: { ticks:{callback:v=>"$"+(v/1e9).toFixed(1)+"B"} },
+                y1:{ position:"right", grid:{display:false} }
+            }
         }
-    }
+    });
+
+    // ---- Government Contracts ----
+    if (govChart) govChart.destroy();
+    const agencyTotals = {};
+    data.gov_contracts.forEach(c=>{
+        agencyTotals[c.agency]=(agencyTotals[c.agency]||0)+c.amount;
+    });
+
+    govChart = new Chart(document.getElementById("govChart"),{
+        type:"bar",
+        data:{
+            labels:Object.keys(agencyTotals),
+            datasets:[{
+                label:`Gov Contracts (${data.ticker})`,
+                data:Object.values(agencyTotals),
+                backgroundColor:"#f59e0b"
+            }]
+        },
+        options:{
+            scales:{ y:{ ticks:{callback:v=>"$"+(v/1e6).toFixed(1)+"M"} } }
+        }
+    });
+
+    status.innerHTML = `<strong>Showing ${data.ticker} — ${data.company}</strong>`;
+
+    status.innerHTML = `
+<strong>Showing ${data.ticker} — ${data.company}</strong>
+&nbsp;|&nbsp;
+<a href="/contracts?ticker=${data.ticker}&company=${encodeURIComponent(data.company)}"
+   target="_blank"
+   style="color:#2563eb; font-weight:600; text-decoration:none;">
+   View all government contracts →
+</a>
+`;
+
+
+}
 </script>
 </body>
 </html>
