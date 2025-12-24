@@ -12,6 +12,7 @@ HEADERS = {
 }
 
 USA_SPENDING_URL = "https://api.usaspending.gov/api/v2/search/spending_by_award/"
+LIMIT = 100
 
 
 @app.route("/")
@@ -58,7 +59,7 @@ def get_gov_contracts(company_name, ticker):
             "Awarding Agency",
             "Start Date"
         ],
-        "limit": 50,
+        "limit": LIMIT,
         "page": 1
     }
 
@@ -83,6 +84,63 @@ def get_gov_contracts(company_name, ticker):
                 "date": row.get("Start Date")
             })
     return clean
+
+def get_government_contracts_details(company_name):
+    payload = {
+        "filters": {
+            "recipient_search_text": [company_name],
+            "award_type_codes": ["A", "B", "C", "D"]  # Contracts + grants
+        },
+        "fields": [
+            "Award ID",
+            "Recipient Name",
+            "Award Amount",
+            "Awarding Agency",
+            "Start Date",
+            "Award Type"
+        ],
+        "limit": LIMIT,
+        "page": 1
+    }
+
+    headers = {"Content-Type": "application/json"}
+
+    r = requests.post(USA_SPENDING_URL, json=payload, headers=headers)
+    r.raise_for_status()
+    data = r.json()
+
+    results = []
+    for row in r.json().get("results", []):
+        date_str = row.get("Start Date")
+
+        try:
+            parsed_date = datetime.strptime(date_str, "%Y-%m-%d") if date_str else None
+        except ValueError:
+            parsed_date = None
+
+        amount = float(row.get("Award Amount") or 0)
+
+        results.append({
+            "date": date_str,
+            "date_obj": parsed_date,  # for sorting only
+            "agency": row.get("Awarding Agency", ""),
+            "amount": amount,
+            "type": row.get("Award Type", ""),
+            "program": row.get("Award ID", ""),
+            "is_large": amount >= 10_000_000
+        })
+
+    # 🔥 SORT: latest date first
+    results.sort(
+        key=lambda x: x["date_obj"] or datetime.min,
+        reverse=True
+    )
+
+    # Remove helper field before sending to template
+    for r in results:
+        r.pop("date_obj", None)
+
+    return results
 
 
 # ---------------- FINANCIALS ----------------
@@ -151,5 +209,31 @@ def get_financials():
         return jsonify({"error": str(e)})
 
 
+@app.route("/contracts")
+def contracts():
+    ticker = request.args.get("ticker")
+    name = request.args.get("name")
+
+    if not name:
+        return "Missing company name", 400
+
+    try:
+        contracts_data = get_government_contracts_details(name)
+
+        return render_template(
+            "contracts.html",
+            ticker=ticker,
+            name=name,
+            contracts=contracts_data
+        )
+
+    except Exception as e:
+        return f"Error fetching contracts: {e}", 500
+
+
+# ---------------- M A I N ---------------- #
+
 if __name__ == "__main__":
     app.run(debug=True)
+
+# ----------------------------------------- #

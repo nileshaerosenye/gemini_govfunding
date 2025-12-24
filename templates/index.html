@@ -29,7 +29,16 @@ input { width:100%; padding:14px; font-size:16px }
 </div>
 
 <div class="chart-box">
-<h2>🏛 Government Contracts</h2>
+<h2>🏛 Government Contracts
+
+<a id="contractsLink"
+   href="#"
+   style="color:#2563eb;font-weight:600;text-decoration:underline;"
+   target="_blank">
+   View all government contracts
+</a>
+
+</h2>
 <canvas id="govChart"></canvas>
 </div>
 </div>
@@ -116,15 +125,8 @@ async function load(s) {
 
     status.innerHTML = `<strong>Showing ${data.ticker} — ${data.company}</strong>`;
 
-    status.innerHTML = `
-<strong>Showing ${data.ticker} — ${data.company}</strong>
-&nbsp;|&nbsp;
-<a href="/contracts?ticker=${data.ticker}&company=${encodeURIComponent(data.company)}"
-   target="_blank"
-   style="color:#2563eb; font-weight:600; text-decoration:none;">
-   View all government contracts →
-</a>
-`;
+    document.getElementById("contractsLink").href =
+    `/contracts?ticker=${s.ticker}&name=${encodeURIComponent(s.name)}`;
 
 
 }

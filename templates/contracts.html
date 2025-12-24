@@ -1,44 +1,111 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<title>{{ company }} – Government Contracts</title>
-<style>
-body {
-    font-family: Inter, Arial;
-    background: #f8fafc;
-    padding: 40px;
-}
-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: white;
-}
-th, td {
-    padding: 12px;
-    border-bottom: 1px solid #e5e7eb;
-}
-th {
-    background: #f1f5f9;
-}
-</style>
-</head>
+    <meta charset="UTF-8">
+    <title>Government Contracts – {{ ticker }}</title>
+    <style>
+        body {
+            font-family: Inter, sans-serif;
+            background: #f8fafc;
+            padding: 40px;
+        }
+        .container {
+            max-width: 1100px;
+            margin: auto;
+            background: white;
+            padding: 30px;
+            border-radius: 14px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+        }
+        h1 {
+            margin-bottom: 10px;
+        }
+        h2 {
+            color: #64748b;
+            font-size: 16px;
+            margin-bottom: 25px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th {
+            background: #0f172a;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-size: 14px;
+        }
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #e5e7eb;
+            font-size: 14px;
+        }
+        tr:hover {
+            background: #f1f5f9;
+        }
+        .amount {
+            font-weight: 600;
+            color: #16a34a;
+        }
+        .big-contract {
+            background-color: #ecfeff;
+            font-weight: 600;
+        }
 
+        .badge {
+            background: #10b981;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            margin-left: 6px;
+        }
+    </style>
+</head>
 <body>
 
-<h1>{{ company }} ({{ ticker }})</h1>
-<p>Government Contract Awards</p>
+<div class="container">
+    <h1>{{ name }} ({{ ticker }})</h1>
+    <h2>Government Contracts & Federal Funding</h2>
 
-<table>
-<tr>
-    <th>Award Date</th>
-    <th>Amount</th>
-    <th>Agency</th>
-    <th>Type</th>
-</tr>
-<tr>
-    <td colspan="4">Contract data will be loaded here next</td>
-</tr>
-</table>
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Awarding Agency</th>
+                <th>Program</th>
+                <th>Contract Type</th>
+                <th>Award Amount (USD)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in contracts %}
+            <tr class="{% if c.is_large %}big-contract{% endif %}">
+                <td>{{ c.date }}</td>
+                <td>{{ c.agency }}</td>
+                <td>
+                    ${{ "{:,.0f}".format(c.amount) }}
+                    {% if c.is_large %}
+                        <span class="badge">BIG</span>
+                    {% endif %}
+                </td>
+                <td>{{ c.type }}</td>
+                <td>{{ c.program }}</td>
+            </tr>
+            {% endfor %}
+
+            {% if contracts|length == 0 %}
+            <tr>
+                <td colspan="5" style="text-align:center;color:#64748b;">
+                    No federal contracts found for this company.
+                </td>
+            </tr>
+            {% endif %}
+        </tbody>
+
+    </table>
+</div>
 
 </body>
 </html>
